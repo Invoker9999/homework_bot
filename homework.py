@@ -7,26 +7,20 @@ from datetime import datetime, timedelta
 from http import HTTPStatus
 
 from dotenv import load_dotenv
-from telebot import TeleBot, types
+from telebot import TeleBot
 import requests
 
-import exceptions
+from exceptions import (
+    CustomAPIResponseError,
+    HomeworkVerdictNotFound,
+    NotForSendingError,
+    TelegramError,
+    JSONDecodeError)
 
 
 load_dotenv()
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - [%(levelname)s] - %(name)s - '
-           '(%(filename)s).%(funcName)s(%(lineno)d) - %(message)s',
-    handlers=[
-        logging.FileHandler("program.log"),
-        logging.StreamHandler()  # Логи выводятся в консоль
-    ]
-)
 logger = logging.getLogger(__name__)
-logger.debug('Начало работы бота')
 
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
@@ -47,10 +41,7 @@ HOMEWORK_VERDICTS = {
 
 def check_tokens():
     """Проверяет доступность переменных окружения."""
-    if not all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]):
-        logger.critical('Отсутствует хотя бы одна переменная окружения')
-        sys.exit()
-    logger.debug('Переменные окружения доступны')
+    return all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID])
 
 
 def get_api_answer(timestamp):
@@ -61,12 +52,12 @@ def get_api_answer(timestamp):
     except requests.RequestException as error:
         raise ConnectionError(f'Ошибка {error}')
     if response.status_code != HTTPStatus.OK:
-        raise exceptions.CustomAPIResponseError(
+        raise CustomAPIResponseError(
             f'Неуспешный статус ответа API: {response.status_code}')
     try:
         return response.json()
     except json.JSONDecodeError as error:
-        raise exceptions.JSONDecodeError(
+        raise JSONDecodeError(
             f'Ошибка при декодировании JSON: {error}'
         )
 
@@ -77,32 +68,32 @@ def check_response(response):
     из урока «API сервиса Практикум Домашка».
     """
     if not isinstance(response, dict):
-        raise TypeError('Ответ API должен быть словарем')
-    if 'homeworks' not in response or 'current_date' not in response:
-        raise ValueError('В ответе API отсутствуют обязательные ключи')
+        message = (f'Неожиданный формат ответа: {type(response)}\n'
+                   f'Сообщение: {response}')
+        raise TypeError(message)
+    if 'homeworks' not in response:
+        raise KeyError('В ответе нет ключа "homeworks"')
     homeworks = response.get('homeworks')
-    if not isinstance(homeworks, list):
-        raise TypeError('homeworks должны быть списком')
-    if not homeworks:
-        raise ValueError('Список homeworks пуст')
-    current_date = response.get('current_date')
-    if not isinstance(current_date, int):
-        raise TypeError('current_date должен быть целым числом')
-    return homeworks, current_date
+    if not isinstance(response.get("homeworks"), list):
+        raise TypeError(
+            f'Формат ответа не список,'
+            f'получен {type(response.get("homeworks"))}.'
+        )
+    return homeworks
 
 
 def parse_status(homework):
-    """Извлекает из информации о домашней работе статус этой работы."""
-    required_keys = {'status', 'homework_name'}
-    if not required_keys.issubset(homework.keys()):
-        raise KeyError(
-            f'Словарь homework должен содержать ключи: {required_keys}')
-    homework_status = homework.get('status')
-    if homework_status not in HOMEWORK_VERDICTS:
-        raise ValueError(
-            f'Такого статуса домашней работы нет: {homework.get("status")}')
-    homework_name = homework.get('homework_name')
-    verdict = HOMEWORK_VERDICTS.get(homework.get('status'))
+    """Извлекает из информации о конкретной домашней работе ее статус."""
+    try:
+        homework_name = homework['homework_name']
+        status = homework['status']
+    except KeyError as error:
+        raise KeyError(f'В ответе API нет значения {error}')
+    if status not in HOMEWORK_VERDICTS:
+        raise HomeworkVerdictNotFound(
+            f'Неверный статус домашней работы {homework["status"]}'
+        )
+    verdict = HOMEWORK_VERDICTS.get(status)
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
@@ -110,44 +101,70 @@ def send_message(bot, message):
     """Отправляет сообщение в Telegram-чат."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.debug(f'Сообщение отправлено: {message}')
-    except types.TelegramError as telegram_error:
+    except TelegramError as telegram_error:
         logger.error(f'Сбой при отправке сообщения: {telegram_error}')
     except Exception as other_error:
         logger.error(f'Другая ошибка при отправке сообщения: {other_error}')
+    else:
+        logger.debug(f'Сообщение отправлено: {message}')
 
 
-def main():
+def main(): # noqa
     """Основная логика работы бота."""
     check_tokens()
+    if not PRACTICUM_TOKEN:
+        logger.critical('Отсутствует хотя бы одна переменная окружения')
+        sys.exit('Отсутствует PRACTICUM_TOKEN')
+    if not TELEGRAM_TOKEN:
+        logger.critical('Отсутствует хотя бы одна переменная окружения')
+        sys.exit('Отсутствует TELEGRAM_TOKEN')
+    if not TELEGRAM_CHAT_ID:
+        logger.critical('Отсутствует хотя бы одна переменная окружения')
+        sys.exit('Отсутствует TELEGRAM_CHAT_ID')
+    logger.debug('Переменные окружения доступны')
     # Создаем объект класса бота
     bot = TeleBot(token=TELEGRAM_TOKEN)
-    current_date = datetime.now()
-    one_month_ago = current_date - timedelta(days=60)
-    timestamp = int(one_month_ago.timestamp())
+    timestamp = int(time.time())
     while True:
         try:
             response = get_api_answer(timestamp)
-            homeworks, current_date = check_response(response)
+            homeworks = check_response(response)
             # Обновление timestamp для следующего запроса
-            timestamp = current_date
+            timestamp = response.get('current_date', timestamp)
             # Если новых статусов нет, отправляем сообщение об этом
             if not homeworks:
                 message = 'Нет новых статусов домашних работ.'
-                send_message(bot, message)
                 logger.info(message)
             else:
-                for homework in homeworks:
-                    message = parse_status(homework)
-                    send_message(bot, message)
-                    logger.info(message)
-        except Exception as error:
-            message = f'Сбой в работе программы: {error}'
+                message = parse_status(check_response(response)[0])
+                send_message(bot, message)
+                logger.info(message)
+        except NotForSendingError as error:
+            message = (
+                f'Сбой в работе программы,'
+                f'не отправленные в телегу: {error}'
+            )
             logger.error(message)
-            send_message(bot, message)
+        except Exception:
+            try:
+                send_message(bot, message)
+            except TelegramError as error:
+                message = f'Не удалось отправить в телегу: {error}'
+                logger.error(message)
         finally:
             time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':
+    # Настройка логирования
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - [%(levelname)s] - %(name)s - '
+               '(%(filename)s).%(funcName)s(%(lineno)d) - %(message)s',
+        handlers=[
+            logging.FileHandler("program.log"),
+            logging.StreamHandler()  # Логи выводятся в консоль
+        ]
+    )
+    logger.debug('Начало работы бота')
     main()
