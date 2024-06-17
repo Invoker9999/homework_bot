@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timedelta
 from http import HTTPStatus
 
 from dotenv import load_dotenv
