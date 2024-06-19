@@ -87,7 +87,7 @@ def parse_status(homework):
         raise KeyError('Отсутствует ключ "homework_name" в ответе API')
     if "status" not in homework:
         raise KeyError('Отсутствует ключ "status" в ответе API')
-    homework_name = homework['homework_name'] 
+    homework_name = homework['homework_name']
     status = homework['status']
     approved = HOMEWORK_VERDICTS['approved']
     reviewing = HOMEWORK_VERDICTS['reviewing']
@@ -119,7 +119,7 @@ def send_message(bot, message):
 def main(): # noqa
     """Основная логика работы бота."""
     if not check_tokens():
-        logger.critical('Отсутствует хотя бы одна переменная окружения') 
+        logger.critical('Отсутствует хотя бы одна переменная окружения')
         sys.exit('Аварийный выход, ошибка!')
     logger.debug('Переменные окружения доступны')
     # Создаем объект класса бота
