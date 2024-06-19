@@ -83,14 +83,22 @@ def check_response(response):
 
 def parse_status(homework):
     """Извлекает из информации о конкретной домашней работе ее статус."""
-    try:
-        homework_name = homework['homework_name']
-        status = homework['status']
-    except KeyError as error:
-        raise KeyError(f'В ответе API нет значения {error}')
+    if "homework_name" not in homework:
+        raise KeyError('Отсутствует ключ "homework_name" в ответе API')
+    if "status" not in homework:
+        raise KeyError('Отсутствует ключ "status" в ответе API')
+    homework_name = homework['homework_name'] 
+    status = homework['status']
+    approved = HOMEWORK_VERDICTS['approved']
+    reviewing = HOMEWORK_VERDICTS['reviewing']
+    rejected = HOMEWORK_VERDICTS['rejected']
     if status not in HOMEWORK_VERDICTS:
         raise HomeworkVerdictNotFound(
-            f'Неверный статус домашней работы {homework["status"]}'
+            'Неизвестный статус домашней работы {status}.'
+            'Бот работает со следующими статусами:'
+            f'{approved},'
+            f'{reviewing},'
+            f'{rejected}.'
         )
     verdict = HOMEWORK_VERDICTS.get(status)
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
@@ -110,16 +118,9 @@ def send_message(bot, message):
 
 def main(): # noqa
     """Основная логика работы бота."""
-    check_tokens()
-    if not PRACTICUM_TOKEN:
-        logger.critical('Отсутствует хотя бы одна переменная окружения')
-        sys.exit('Отсутствует PRACTICUM_TOKEN')
-    if not TELEGRAM_TOKEN:
-        logger.critical('Отсутствует хотя бы одна переменная окружения')
-        sys.exit('Отсутствует TELEGRAM_TOKEN')
-    if not TELEGRAM_CHAT_ID:
-        logger.critical('Отсутствует хотя бы одна переменная окружения')
-        sys.exit('Отсутствует TELEGRAM_CHAT_ID')
+    if not check_tokens():
+        logger.critical('Отсутствует хотя бы одна переменная окружения') 
+        sys.exit('Аварийный выход, ошибка!')
     logger.debug('Переменные окружения доступны')
     # Создаем объект класса бота
     bot = TeleBot(token=TELEGRAM_TOKEN)
