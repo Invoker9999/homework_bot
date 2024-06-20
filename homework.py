@@ -83,16 +83,21 @@ def check_response(response):
 
 def parse_status(homework):
     """Извлекает из информации о конкретной домашней работе ее статус."""
-    if 'homework_name' not in homework or 'status' not in homework:
-        raise KeyError('Отсутствует один или более ключей "homework_name",'
-                       '"status" в ответе API')
+    missing_keys = []
+    if 'homework_name' not in homework:
+        missing_keys.append('homework_name')
+    if 'status' not in homework:
+        missing_keys.append('status')
+    if missing_keys != []:
+        raise KeyError('Отсутствует ключ/ключи:'
+                       f'{(key for key in missing_keys)} в ответе API')
     homework_name = homework['homework_name']
     status = homework['status']
     if status not in HOMEWORK_VERDICTS:
         raise HomeworkVerdictNotFound(
             'Неизвестный статус домашней работы {status}.'
             'Бот работает со следующими статусами:'
-            f'{HOMEWORK_VERDICTS}.'
+            f'{HOMEWORK_VERDICTS.keys()}.'
         )
     verdict = HOMEWORK_VERDICTS.get(status)
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
